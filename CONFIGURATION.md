@@ -214,6 +214,39 @@ AutostartManager\
 └── ...
 ```
 
+### PowerShell 报 `Join-Path : 无法将参数绑定到参数"Path"，因为该参数为空字符串`
+
+**原因**：脚本在 `param` 块的默认值里调用了 `Join-Path $PSScriptRoot ...`。
+
+`param` 默认值的求值时机**早于脚本正文**，而在部分调用方式下（`-File`、点源 `.` 调用、被其它脚本加载），此时 `$PSScriptRoot` 仍然是空字符串，于是 `Join-Path` 抛错。
+
+**本版本（v1.0.1 起）已彻底修复**：所有脚本都改为在**正文**中解析脚本目录，并带多级兜底（`$PSScriptRoot` → 当前目录 → `AppDomain.BaseDirectory` → `%TEMP%`）。`-Ids` 参数也做了归一化，逗号分隔的 id 列表在 `-File` 调用下同样能正确切分。
+
+**如果你手上是旧版本**，按下面任一方式修复：
+
+1. 直接重新下载本仓库最新版（推荐）；
+2. 或手动把 `Apply-Autostart.ps1` 里这一行
+
+```powershell
+    [string]$ScanFile = (Join-Path $PSScriptRoot 'autostart.json'),
+```
+
+改成
+
+```powershell
+    [string]$ScanFile,
+```
+
+并在 `param(...)` 块**之后**补上：
+
+```powershell
+$ScriptRoot = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot = (Get-Location).Path }
+if ([string]::IsNullOrWhiteSpace($ScanFile)) { $ScanFile = Join-Path $ScriptRoot 'autostart.json' }
+```
+
+> 这个报错还有一个「同伙」：如果命令是 `-Ids a,b,c` 这种逗号串，`powershell -File` **不会**按逗号切分成数组，旧版会把整串当成一个 id，导致命令**静默什么都不做**。新版已在脚本内按 `,`、`;`、空白重新切分，两种写法都安全。
+
 ### PowerShell 报「意外的标记」「缺少右括号」等语法错误
 
 **原因**：**脚本文件丢失了 UTF-8 BOM**。
