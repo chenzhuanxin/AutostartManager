@@ -22,8 +22,21 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------- 路径无关性：脚本可放在任意目录（含中文/空格）----------
+<#
+    注意：param 块的默认值里绝对不能写 (Join-Path $PSScriptRoot ...)。
+    param 默认值在脚本正文之前求值，部分调用方式（-File / 点源）下
+    $PSScriptRoot 仍为空字符串，Join-Path 会直接抛
+    "无法将参数绑定到参数 Path，因为该参数为空字符串"。
+#>
 $ScriptRoot = $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot = (Get-Location).Path }
+if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot = [System.AppDomain]::CurrentDomain.BaseDirectory }
+if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot = $env:TEMP }
+
+# $env:SystemRoot 理论上总有值，但受限会话里可能为空 —— 兜一层避免 Join-Path 报错。
+$sysRoot = $env:SystemRoot
+if ([string]::IsNullOrWhiteSpace($sysRoot)) { $sysRoot = [System.IO.Path]::GetPathRoot($PSHOME) }
+if ([string]::IsNullOrWhiteSpace($sysRoot)) { $sysRoot = 'C:\' }
 
 function Test-IsAdmin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -41,7 +54,7 @@ if (-not (Test-IsAdmin) -and -not $NoElevate) {
     Write-Host ''
 
     try {
-        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $psExe = Join-Path $sysRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         if (-not (Test-Path $psExe)) { $psExe = 'powershell.exe' }
 
         <#
