@@ -153,7 +153,12 @@ HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run
 
 # 实际关闭
 .\Apply-Autostart.ps1 -Action Disable -Ids rk_abc123, rk_def456
+```
 
+> **关于 `-Ids` 的写法**：逗号分隔（`a,b,c`）、空格分隔（`a b c`）都支持。
+> 注意 `powershell -File` 传参时**不会**按逗号自动切分成数组，本工具已在脚本内部做了归一化处理，所以从面板复制出来的命令可以原样粘贴执行。
+
+```powershell
 # 查看所有备份
 .\Apply-Autostart.ps1 -Action ListBackups
 
@@ -212,6 +217,25 @@ HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run
    MySQL 数据库服务                       [开发环境类：mysqld]
    ...
 ```
+
+---
+
+## 更新记录
+
+### v1.0.1
+
+**修复：复制面板命令执行时 PowerShell 报 `Join-Path : 无法将参数绑定到参数"Path"，因为该参数为空字符串`**
+
+- 根因：脚本在 `param` 块的默认值里写了 `Join-Path $PSScriptRoot 'autostart.json'`。`param` 默认值早于正文求值，在 `-File` / 点源等调用方式下 `$PSScriptRoot` 仍为空串，导致 `Join-Path` 抛错。
+- 修复：所有脚本（`Apply-Autostart.ps1`、`Collect-Autostart.ps1`、`Build-Report.ps1`、`Start-Panel.ps1`）改为在正文解析脚本目录，并加入多级兜底：
+  `$PSScriptRoot` → 当前工作目录 → `AppDomain.BaseDirectory` → `%TEMP%`。
+- 修复：`Resolve-BackupDir` 的回退路径不再直接 `Join-Path $env:LOCALAPPDATA`（受限会话下该变量可能为空），改为逐级兜底选择基目录，并在全部候选都不可写时给出明确报错而非静默失败。
+- 修复：`-Ids` 逗号串在 `powershell -File` 下不会被切分成数组（旧版会**静默不动任何项**）。现已在脚本内按 `,`、`;`、空白重新切分，逗号串 / 空格串两种写法都正确。
+- 同步更新 `CONFIGURATION.md` 故障排查章节。
+
+### v1.0.0
+
+首个可用版本。
 
 ---
 
