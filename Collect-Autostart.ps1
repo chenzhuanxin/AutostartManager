@@ -24,8 +24,11 @@ $ProgressPreference = 'SilentlyContinue'
 
 # ---------- 路径无关性 ----------
 # 脚本可放在任意目录（含中文/空格），$PSScriptRoot 始终指向脚本自身所在目录。
+# 注意：不要在 param 块默认值里用 Join-Path $PSScriptRoot（求值时机太早，可能为空串）。
 $__root = $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($__root)) { $__root = (Get-Location).Path }
+if ([string]::IsNullOrWhiteSpace($__root)) { $__root = [System.AppDomain]::CurrentDomain.BaseDirectory }
+if ([string]::IsNullOrWhiteSpace($__root)) { $__root = $env:TEMP }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $__root 'autostart.json' }
 
 # 输出目录若不存在则创建（支持 -OutputPath 指向任意位置）
