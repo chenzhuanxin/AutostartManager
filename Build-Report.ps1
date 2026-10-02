@@ -19,8 +19,11 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------- 路径无关性：脚本可放在任意目录（含中文/空格）----------
+# 注意：不要在 param 块默认值里用 Join-Path $PSScriptRoot（求值时机太早，可能为空串）。
 $PSScriptRoot_ = $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($PSScriptRoot_)) { $PSScriptRoot_ = (Get-Location).Path }
+if ([string]::IsNullOrWhiteSpace($PSScriptRoot_)) { $PSScriptRoot_ = [System.AppDomain]::CurrentDomain.BaseDirectory }
+if ([string]::IsNullOrWhiteSpace($PSScriptRoot_)) { $PSScriptRoot_ = $env:TEMP }
 if ([string]::IsNullOrWhiteSpace($InputPath))  { $InputPath  = Join-Path $PSScriptRoot_ 'autostart.json' }
 if ([string]::IsNullOrWhiteSpace($OutputPath)) { $OutputPath = Join-Path $PSScriptRoot_ 'autostart-report.html' }
 
