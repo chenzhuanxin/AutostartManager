@@ -28,7 +28,7 @@ param(
     [string[]]$Ids,
 
     [string]$Backup,
-    [string]$ScanFile = (Join-Path $PSScriptRoot 'autostart.json'),
+    [string]$ScanFile,
 
     [switch]$DryRun
 )
@@ -36,33 +36,103 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ---------- 路径无关性：脚本可放在任意目录（含中文/空格）----------
+<#
+    重要：绝对不要在 param 块的默认值里写 (Join-Path $PSScriptRoot ...)！
+    param 默认值的求值时机早于脚本正文，且在部分调用方式下
+    （-File、点源、被其它脚本 Import 等）$PSScriptRoot 仍为空字符串，
+    于是 Join-Path 会抛出：
+        Join-Path : 无法将参数绑定到参数"Path"，因为该参数为空字符串。
+    因此所有依赖脚本目录的路径都必须放到正文里解析。
+#>
 $ScriptRoot = $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot = (Get-Location).Path }
+if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot = [System.AppDomain]::CurrentDomain.BaseDirectory }
+if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot = $env:TEMP }
+
+if ([string]::IsNullOrWhiteSpace($ScanFile)) { $ScanFile = Join-Path $ScriptRoot 'autostart.json' }
+
+<#
+    -Ids 参数归一化（重要）：
+    powershell.exe -File 传参时 **不会** 按逗号切分数组，
+    面板生成的命令是  -Ids rk_aaa,rk_bbb,rk_ccc  ，
+    此时 $Ids 只会得到一个元素 "rk_aaa,rk_bbb,rk_ccc"，
+    循环里一个 id 都匹配不上 → 命令静默失败。
+    这里统一按 逗号/分号/空白 再切一次，两种传法都能正确工作。
+#>
+if ($Ids) {
+    $__ids = New-Object System.Collections.Generic.List[string]
+    foreach ($chunk in $Ids) {
+        if ([string]::IsNullOrWhiteSpace($chunk)) { continue }
+        foreach ($piece in ($chunk -split '[,\s;]+')) {
+            $p = $piece.Trim().Trim('"').Trim("'")
+            if (-not [string]::IsNullOrWhiteSpace($p)) { $__ids.Add($p) }
+        }
+    }
+    $Ids = $__ids.ToArray()
+}
 
 <#
     备份目录选择策略：
       1) 默认放在脚本同级 backup\ —— 便于整个文件夹拷走时备份一起带走；
       2) 若脚本目录只读（例如放在 Program Files），自动回退到
          %LOCALAPPDATA%\AutostartManager\backup，保证功能不中断。
+
+    注意：回退路径的"基目录"必须逐级兜底。在提权/受限会话里
+    $env:LOCALAPPDATA 可能是空字符串，此时 Join-Path 会直接报
+    "无法将参数绑定到参数 Path，因为该参数为空字符串"。
 #>
-function Resolve-BackupDir([string]$Preferred) {
+function Get-SafeAppDataBase {
+    # 注意：候选值里不能直接写 Join-Path，否则基路径为空时会先抛异常。
+    $cands = New-Object System.Collections.Generic.List[string]
+    foreach ($c in @($env:LOCALAPPDATA, $env:APPDATA)) {
+        if (-not [string]::IsNullOrWhiteSpace($c)) { $cands.Add($c) }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $cands.Add((Join-Path $env:USERPROFILE 'AppData\Local'))
+        $cands.Add($env:USERPROFILE)
+    }
+    foreach ($c in @($env:TEMP)) {
+        if (-not [string]::IsNullOrWhiteSpace($c)) { $cands.Add($c) }
+    }
+    foreach ($c in $cands) {
+        if (-not [string]::IsNullOrWhiteSpace($c)) { return $c }
+    }
+    return [System.IO.Path]::GetTempPath()
+}
+
+function Test-DirWritable([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
     try {
-        if (-not (Test-Path -LiteralPath $Preferred)) {
-            New-Item -ItemType Directory -Path $Preferred -Force -ErrorAction Stop | Out-Null
+        if (-not (Test-Path -LiteralPath $Path)) {
+            New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
         }
         # 实际写一个探针文件，确认真的可写（只读目录 Test-Path 也会通过）
-        $probe = Join-Path $Preferred ('.writetest-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+        $probe = Join-Path $Path ('.writetest-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
         [System.IO.File]::WriteAllText($probe, 'ok')
-        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-        return $Preferred
+        return $true
     } catch {
-        $fallback = Join-Path $env:LOCALAPPDATA 'AutostartManager\backup'
-        if (-not (Test-Path -LiteralPath $fallback)) {
-            New-Item -ItemType Directory -Path $fallback -Force -ErrorAction SilentlyContinue | Out-Null
-        }
+        return $false
+    }
+}
+
+function Resolve-BackupDir([string]$Preferred) {
+    if (Test-DirWritable $Preferred) { return $Preferred }
+
+    $base = Get-SafeAppDataBase
+    $fallback = Join-Path $base 'AutostartManager\backup'
+    if (Test-DirWritable $fallback) {
         Write-Host "  提示：脚本目录不可写，备份改用 $fallback" -ForegroundColor Yellow
         return $fallback
     }
+
+    # 最后兜底：系统临时目录
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) 'AutostartManager\backup'
+    if (Test-DirWritable $tmp) {
+        Write-Host "  提示：脚本目录不可写，备份改用临时目录 $tmp" -ForegroundColor Yellow
+        return $tmp
+    }
+
+    throw "找不到任何可写的备份目录（已尝试：$Preferred、$fallback、$tmp）"
 }
 
 $BackupDir = Resolve-BackupDir (Join-Path $ScriptRoot 'backup')
