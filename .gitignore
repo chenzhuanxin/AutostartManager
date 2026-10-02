@@ -1,0 +1,11 @@
+# 扫描结果与面板是每次运行重新生成的中间产物，不入库
+autostart.json
+autostart-report.html
+
+# 备份目录含本机自启动配置快照，属于个人数据，不入库
+backup/
+
+# 临时文件
+*.tmp
+*.log
+~$*
