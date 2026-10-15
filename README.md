@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="120" alt="AutostartManager"></p>
+
 # Windows 开机自启动管理面板
 
 一个纯 PowerShell 写的 Windows 自启动项扫描与管理工具。扫描本机所有开机自启动项（注册表 / 启动文件夹 / 计划任务 / 系统服务），生成一个可交互的 HTML 面板，**自动标注哪些建议关闭、哪些不可关闭**，并支持安全回滚。
